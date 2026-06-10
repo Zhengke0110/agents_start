@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    // 目标 JavaScript 版本
+    "target": "ES2022",
+    // 模块系统
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // 输出目录
+    "outDir": "./dist",
+    // 源代码目录
+    "rootDir": ".",
+    // 严格模式（帮我们提前发现错误）
+    "strict": true,
+    // 允许处理 JSON 文件
+    "resolveJsonModule": true,
+    // 跳过库类型检查（加快编译）
+    "skipLibCheck": true,
+    // 强制文件名大小写一致
+    "forceConsistentCasingInFileNames": true
+  },
+  // 只编译 demos 目录下的文件
+  "include": ["demos/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

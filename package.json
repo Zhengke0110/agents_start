@@ -1,0 +1,26 @@
+{
+  "name": "agent-learning-demos",
+  "version": "1.0.0",
+  "description": "从零开始学习 Agent 开发 —— 一个 Demo 一个 Demo 地掌握 LLM、Tool Calling、Agent Loop、RAG 等核心概念",
+  "private": true,
+  "scripts": {
+    "demo:00": "npx tsx demos/00-hello-llm/src/index.ts",
+    "demo:01": "npx tsx demos/01-tool-calling/src/index.ts",
+    "demo:02": "npx tsx demos/02-simple-agent-loop/src/index.ts",
+    "demo:03": "npx tsx demos/03-file-agent/src/index.ts",
+    "demo:04": "npx tsx demos/04-rag-agent/src/index.ts",
+    "demo:05": "npx tsx demos/05-planning-agent/src/index.ts",
+    "demo:06": "npx tsx demos/06-multi-tool-agent/src/index.ts",
+    "demo:07": "npx tsx demos/07-multi-agent/src/index.ts",
+    "demo:08": "npx tsx demos/08-deepagents-style-agent/src/index.ts"
+  },
+  "dependencies": {
+    "openai": "^4.90.0",
+    "dotenv": "^16.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "tsx": "^4.19.0"
+  }
+}
