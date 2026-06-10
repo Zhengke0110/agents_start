@@ -358,3 +358,71 @@ function searchDocs(query: string): Chunk[] {
 - 用 embedding + 向量数据库（如 Chroma、Pinecone）做语义检索
 - 支持 PDF 等更多文档格式
 - 加入 reranker（对检索结果重新排序，提高精度）
+
+---
+
+## Demo 05：Planning Agent 任务规划
+
+### 学到的新概念
+
+#### 1. Planning 对 Agent 的作用
+
+面对复杂任务（如"准备技术分享"），Agent 不能一步完成。Planning 让它：
+- **结构化**：把模糊大任务变成清晰小步骤
+- **可追踪**：知道当前做到哪了、还剩什么
+- **防遗漏**：不会漏掉步骤
+- **可恢复**：中断后可以从 Todo List 继续
+
+#### 2. 任务状态机
+
+```
+pending ──→ in_progress ──→ completed
+ 待办         进行中         已完成
+```
+
+每种状态的含义明确，Agent 通过 updateTodo 切换状态，模拟了真实项目管理的流程。
+
+#### 3. 任务拆解为什么重要
+
+复杂任务的步骤之间有逻辑依赖。比如"写报告"依赖"查资料"先完成。没有规划的话：
+- Agent 可能先写报告再查资料（顺序错误）
+- 可能漏掉中间步骤
+- 用户无法判断执行到哪一步了
+
+#### 4. 规划失败可能带来的问题
+
+- **计划太细**：10 步的活列了 50 个 todo，浪费大量 token
+- **计划太粗**：步骤描述不清，执行时不知道做什么
+- **顺序错误**：依赖关系没考虑
+- **忘记更新状态**：Agent 做了事但一直 in_progress
+
+### 核心代码逻辑
+
+```typescript
+// Todo 管理（内存存储）
+interface Todo {
+  id: string;
+  title: string;
+  status: "pending" | "in_progress" | "completed";
+  result: string;
+}
+
+// 三个工具：createTodo / updateTodo / listTodos
+// Agent Loop 和前面 Demo 完全一样
+```
+
+关键在 system prompt 的规则：
+> 一次只做一个任务（in_progress），完成后标记 completed 再做下一个。
+
+### 常见错误
+
+1. **Agent 跳过规划直接执行** → system prompt 要明确要求"先规划"
+2. **并行执行多个任务** → system prompt 要强调"一次只做一个"
+3. **Todo ID 对不上** → Agent 可能记错 ID，updateTodo 时要校验
+
+### 后续如何扩展
+
+- 加入子任务（嵌套 Todo）
+- 持久化 Todo 到文件（跨会话保持）
+- 加入依赖关系（任务 3 依赖任务 1 完成）
+- 加入时间估计和实际耗时统计
