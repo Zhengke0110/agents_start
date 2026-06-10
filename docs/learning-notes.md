@@ -285,3 +285,76 @@ while (loopCount < MAX_LOOPS) {
 - 加入 `deleteFile` 工具（需要更严格的安全控制）
 - 支持读取多种格式（PDF、CSV 等）
 - 加入文件变更追踪（记录 Agent 做了什么操作）
+
+---
+
+## Demo 04：RAG Agent 本地知识库问答
+
+### 学到的新概念
+
+#### 1. 什么是 RAG？
+
+RAG = Retrieval Augmented Generation（检索增强生成）
+
+三步流程：检索 → 增强 → 生成
+- 检索：从文档中找相关片段
+- 增强：把片段和问题拼在一起作为上下文
+- 生成：模型基于增强后的上下文回答
+
+#### 2. RAG 和普通聊天的区别
+
+| | 普通聊天 | RAG |
+|---|---|---|
+| 知识来源 | 训练数据（可能过时） | 本地文档（可控、可更新） |
+| 准确性 | 可能编造 | 基于文档，更可靠 |
+| 溯源 | 不知道从哪来 | 能引用来源 |
+| 更新 | 重新训练 | 更新文档即可 |
+
+#### 3. Chunk 是什么？
+
+Chunk = 文档片段。长文档不能整篇塞进上下文，需要切成小块。检索时只取最相关的几个 chunk。
+
+拆分方式：按段落、按标题、按固定字数。
+
+#### 4. 检索（Retrieval）是什么？
+
+从文档集合中找到和查询最相关的内容。实现方式：
+- **关键词匹配**（本 Demo）：拆分查询词，统计出现次数，打分排序。简单但不理解语义。
+- **向量相似度**（进阶）：用 embedding 模型把文本转成向量，计算余弦相似度。
+- **混合检索**：关键词 + 向量，兼顾精确匹配和语义理解。
+
+#### 5. 知识泄露风险
+
+检索到的 chunk 可能包含敏感信息（密钥、内部数据），模型会无差别地暴露给用户。所以知识库要审查，敏感内容要隔离。
+
+### 核心代码逻辑
+
+```typescript
+// 检索器：关键词打分
+function searchDocs(query: string): Chunk[] {
+  const keywords = query.toLowerCase().split(/\s+/);
+  return chunks
+    .map(chunk => ({
+      chunk,
+      score: keywords.reduce((s, kw) =>
+        s + (chunk.content.match(new RegExp(kw, "g"))?.length ?? 0), 0),
+    }))
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+}
+
+// Agent：调 searchDocs → 拿到片段 → 基于片段回答
+```
+
+### 常见错误
+
+1. **检索结果不相关** → 关键词匹配太粗糙，后续需升级为向量检索
+2. **上下文过长** → 返回太多 chunk 会撑爆 token 限制，要控制 topK
+3. **模型忽略检索结果** → system prompt 要明确要求基于文档回答并引用来源
+
+### 后续如何扩展
+
+- 用 embedding + 向量数据库（如 Chroma、Pinecone）做语义检索
+- 支持 PDF 等更多文档格式
+- 加入 reranker（对检索结果重新排序，提高精度）
