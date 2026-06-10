@@ -26,14 +26,18 @@ const client = new OpenAI({
 const MAX_LOOPS = 10;
 
 async function main() {
-  const userMessage = "先查一下北京和上海的天气，然后算出这两天气温差。现在几点了？";
+  const userMessage =
+    "先查一下北京和上海的天气，然后算出这两天气温差。现在几点了？";
 
   console.log("========== Demo 02：Simple Agent Loop ==========\n");
   console.log("[user]", userMessage, "\n");
 
   // 消息历史：记录整段对话（包括工具调用），模型需要完整上下文
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: "你是一个有用的助手，可以使用工具。请用中文回复。" },
+    {
+      role: "system",
+      content: "你是一个有用的助手，可以使用工具。请用中文回复。",
+    },
     { role: "user", content: userMessage },
   ];
 
@@ -54,6 +58,8 @@ async function main() {
     });
 
     const choice = response.choices[0];
+    // console.log("choice===>", choice);
+    // console.log("choice tool_calls===>", choice.message.tool_calls);
 
     // ② 判断模型是想调工具，还是直接回复
     const wantsTool =
