@@ -475,3 +475,73 @@ Agent 知道不能先 writeFile 再 searchDocs，因为还没有内容可写。
 - 升级为向量检索（解决关键词匹配不准的问题）
 - 加入工具选择的优先级（避免 Agent 在多个工具间犹豫）
 - 工具调用计数和限流（防止重复调用浪费资源）
+
+---
+
+## Demo 07：Multi-Agent 多 Agent 协作
+
+### 学到的新概念
+
+#### 1. 什么是子 Agent？
+
+子 Agent = 一次独立的 LLM 调用 + 一个专门的 system prompt。
+
+和工具调用的区别：
+
+| | 工具调用 | 子 Agent |
+|---|---|---|
+| 本质 | 模型调一个函数 | 模型产生一段文本 |
+| 返回 | 结构化数据（计算结果） | 自然语言（分析报告） |
+| 确定性 | 高（计算器一定对） | 低（每次输出不同） |
+| 用途 | 获取数据、执行操作 | 分析、创作、审核 |
+
+#### 2. 多 Agent 适合什么场景？
+
+- **角色分明**：需要不同视角（研究员/写作者/审核员）
+- **任务可分阶段**：上一个 Agent 的输出是下一个 Agent 的输入
+- **质量要求高**：一个产出，另一个检查
+- **并行化**：多个子 Agent 可以同时工作
+
+#### 3. 子 Agent 和普通函数调用的区别
+
+普通函数输入 → 处理 → 输出，逻辑确定。
+子 Agent 输入 → LLM 推理 → 输出，每次结果可能不同。子 Agent 的优势是**灵活性**——你不需要写死处理逻辑，只需要写好 system prompt。
+
+#### 4. 多 Agent 可能产生的失控问题
+
+- **级联错误**：Researcher 漏了信息 → Writer 报告缺内容 → Reviewer 没发现
+- **Token 消耗翻倍**：每个子 Agent 都要独立调用 LLM
+- **无限修改循环**：Writer 改 → Reviewer 不满意 → 再改 → 仍不满意...
+- **角色模糊**：两个 Agent 的 prompt 太相似，做了重复工作
+
+### 核心代码逻辑
+
+```typescript
+// 每个子 Agent 就是一次独立的 LLM 调用
+async function researcherAgent(topic: string, knowledge: string) {
+  return client.chat.completions.create({
+    messages: [
+      { role: "system", content: "你是一名研究员..." },
+      { role: "user", content: `主题：${topic}\n材料：${knowledge}` },
+    ],
+  });
+}
+
+// Writer 和 Reviewer 同理，只是 system prompt 不同
+// 主流程串联：
+const findings = await researcherAgent(topic, knowledge);
+const report = await writerAgent(topic, findings);
+const review = await reviewerAgent(report, findings);
+```
+
+### 常见错误
+
+1. **子 Agent 的 system prompt 太模糊** → 输出偏离预期，需要写清楚输出格式
+2. **上下文过长** → 把整本知识库塞给一个子 Agent，token 不够
+3. **没有验证上一步输出** → Researcher 输出为空，Writer 仍然硬写报告
+
+### 后续如何扩展
+
+- 并行化（Researcher A 和 Researcher B 同时查不同主题）
+- 加入重试机制（Reviewer 不满意 → Writer 修改 → 再审核）
+- 实现真正的 tool-calling 子 Agent（子 Agent 也能调工具）
