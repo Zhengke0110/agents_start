@@ -23,6 +23,7 @@ import { StateGraph, Annotation, END } from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import * as fs from "fs";
 import * as path from "path";
+import { writeFile, deleteFile, confirmDeleteFile, listFiles, toolDescriptions } from "../tools/file-tools.js";
 
 const model = new ChatOpenAI({
   model: "deepseek-chat",
@@ -67,6 +68,10 @@ const AgentState = Annotation.Root({
     value: (a, b) => b ?? a ?? "",
     default: () => "",
   }),
+  pendingAction: Annotation<{ tool: string; filePath: string } | null>({
+    value: (a, b) => b ?? a ?? null,
+    default: () => null,
+  }),
 });
 
 // ================================================================
@@ -75,7 +80,7 @@ const AgentState = Annotation.Root({
 async function planner(state: typeof AgentState.State) {
   console.log("\n[planner] 分析任务，生成计划...");
 
-  const prompt = `你是任务规划助手。请把以下任务拆成 3-5 个具体步骤，每行一个：\n\n${state.userInput}\n\n只输出步骤列表。`;
+  const prompt = `你是任务规划助手。请把以下任务拆成 3-5 个具体步骤，每行一个：\n\n${state.userInput}\n\n规则：不要生成"生成报告""汇总报告"之类的步骤，系统会自动生成最终报告。只输出步骤列表。`;
 
   const response = await model.invoke(prompt);
   const content =
@@ -107,7 +112,7 @@ async function planner(state: typeof AgentState.State) {
 }
 
 // ================================================================
-// 节点 2：Executor —— 执行一个任务并标记完成
+// 节点 2：Executor —— 用 LLM 选工具 + 真正执行
 // ================================================================
 async function executor(state: typeof AgentState.State) {
   const idx = state.currentTaskIndex;
@@ -117,19 +122,155 @@ async function executor(state: typeof AgentState.State) {
     return { log: ["[executor] 无待执行任务"] };
   }
 
-  console.log(`\n[executor] 完成任务 ${todo.id}：${todo.title}`);
+  console.log(`\n[executor] 执行任务 ${todo.id}：${todo.title}`);
 
+  // 如果有待审批的操作且审批已通过，执行它
+  if (state.pendingAction) {
+    const action = state.pendingAction;
+    console.log(`[executor] 执行已审批的操作：${action.tool}("${action.filePath}")`);
+
+    let result: string;
+    if (action.tool === "deleteFile") {
+      const r = confirmDeleteFile(action.filePath);
+      result = r.message;
+    } else {
+      result = `未知操作：${action.tool}`;
+    }
+
+    const newTodos = state.todos.map((t, i) =>
+      i === idx ? { ...t, status: "completed" as const, result } : t,
+    );
+
+    return {
+      todos: newTodos,
+      currentTaskIndex: idx + 1,
+      needsApproval: false,
+      approvalMessage: "",
+      pendingAction: null,
+      log: [`[executor] 已完成：${todo.title} → ${result}`],
+    };
+  }
+
+  // 用 LLM 决定执行哪个工具
+  const toolPrompt = `你是一个工具执行器。根据任务描述，选择一个工具执行。
+
+${toolDescriptions}
+
+规则：
+- 直接执行任务要求的操作，不要先"检查"再执行。deleteFile 会自动处理文件不存在的情况。
+- 如果任务是"删除 temp.txt"，直接调 deleteFile("temp.txt")，不要先调 listFiles。
+- 如果任务是"创建笔记"，直接调 writeFile。
+- 如果任务说"生成报告"或"汇总"，返回 {"tool": "none", "reason": "由系统生成"}
+
+任务描述：${todo.title}
+
+请返回 JSON：{"tool": "工具名", "args": ["参数1", "参数2"]}
+只返回 JSON。`;
+
+  const response = await model.invoke(toolPrompt);
+  const text = typeof response.content === "string"
+    ? response.content
+    : JSON.stringify(response.content);
+
+  console.log(`[executor] LLM 决策：${text.slice(0, 150)}`);
+
+  // 解析 LLM 返回的 JSON
+  let toolCall: { tool: string; args: string[] };
+  try {
+    // 提取 JSON（可能被 markdown 包裹）
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    toolCall = jsonMatch ? JSON.parse(jsonMatch[0]) : { tool: "none", args: [] };
+  } catch {
+    toolCall = { tool: "none", args: [] };
+  }
+
+  // 不需要工具 → 标记完成
+  if (toolCall.tool === "none") {
+    const newTodos = state.todos.map((t, i) =>
+      i === idx ? { ...t, status: "completed" as const, result: "无需工具" } : t,
+    );
+    return {
+      todos: newTodos,
+      currentTaskIndex: idx + 1,
+      needsApproval: false,
+      approvalMessage: "",
+      log: [`[executor] ${todo.title} → 无需工具，标记完成`],
+    };
+  }
+
+  // 执行工具
+  const [arg1, arg2] = toolCall.args || [];
+  console.log(`[executor] 调用工具：${toolCall.tool}(${[arg1, arg2].filter(Boolean).join(", ")})`);
+
+  if (toolCall.tool === "writeFile") {
+    // 对于"创建笔记"这类任务，用 LLM 先生成内容
+    const contentPrompt = `请为以下任务生成合适的文件内容：\n${todo.title}\n\n直接输出文件内容，不要解释。`;
+    const contentRes = await model.invoke(contentPrompt);
+    const content = typeof contentRes.content === "string"
+      ? contentRes.content
+      : JSON.stringify(contentRes.content);
+
+    const r = writeFile(arg1 || "untitled.md", arg2 || content);
+    const newTodos = state.todos.map((t, i) =>
+      i === idx ? { ...t, status: "completed" as const, result: r.message } : t,
+    );
+    return {
+      todos: newTodos,
+      currentTaskIndex: idx + 1,
+      needsApproval: false,
+      approvalMessage: "",
+      log: [`[executor] writeFile("${arg1}") → ${r.message}`],
+    };
+  }
+
+  if (toolCall.tool === "deleteFile") {
+    const r = deleteFile(arg1 || "");
+    if (r.needsApproval) {
+      // 需要审批：不标记完成，不推进索引，设置审批状态
+      return {
+        needsApproval: true,
+        approvalMessage: `确认删除文件：${arg1}？`,
+        pendingAction: { tool: "deleteFile", filePath: arg1 || "" },
+        log: [`[executor] deleteFile("${arg1}") → 等待审批`],
+      };
+    }
+    // 文件不存在，直接完成
+    const newTodos = state.todos.map((t, i) =>
+      i === idx ? { ...t, status: "completed" as const, result: r.message } : t,
+    );
+    return {
+      todos: newTodos,
+      currentTaskIndex: idx + 1,
+      needsApproval: false,
+      approvalMessage: "",
+      log: [`[executor] deleteFile("${arg1}") → ${r.message}`],
+    };
+  }
+
+  if (toolCall.tool === "listFiles") {
+    const r = listFiles();
+    const newTodos = state.todos.map((t, i) =>
+      i === idx ? { ...t, status: "completed" as const, result: r.message } : t,
+    );
+    return {
+      todos: newTodos,
+      currentTaskIndex: idx + 1,
+      needsApproval: false,
+      approvalMessage: "",
+      log: [`[executor] listFiles → 完成`],
+    };
+  }
+
+  // 未知工具
   const newTodos = state.todos.map((t, i) =>
-    i === idx ? { ...t, status: "completed" as const, result: "已完成" } : t,
+    i === idx ? { ...t, status: "completed" as const, result: `未知工具：${toolCall.tool}` } : t,
   );
-
   return {
     todos: newTodos,
     currentTaskIndex: idx + 1,
-    // Bug 修复：执行完后清除审批状态
     needsApproval: false,
     approvalMessage: "",
-    log: [`[executor] 已完成：${todo.title}`],
+    log: [`[executor] 未知工具：${toolCall.tool}`],
   };
 }
 
@@ -145,24 +286,16 @@ function router(state: typeof AgentState.State): string {
     return "reporter";
   }
 
-  const todo = state.todos[idx];
-  const title = todo.title;
-  // 精确匹配：任务描述开头包含危险动词才判危险
-  const dangerPatterns = [
-    /^删除/,
-    /删除文件/,
-    /删除目录/,
-    /覆盖文件/,
-    /执行.*命令/,
-    /shell/,
-  ];
-
-  if (dangerPatterns.some((p) => p.test(title))) {
-    console.log(`[router] 危险操作 → human_approval：${title}`);
+  // 有待审批的操作 → human_approval
+  if (state.needsApproval || state.pendingAction) {
+    const todo = state.todos[idx];
+    console.log(`[router] 需要审批 → human_approval：${todo?.title}`);
     return "human_approval";
   }
 
-  console.log(`[router] 安全任务 → executor：${todo.title}`);
+  // 继续执行下一个任务
+  const todo = state.todos[idx];
+  console.log(`[router] 继续 → executor：${todo?.title}`);
   return "executor";
 }
 
