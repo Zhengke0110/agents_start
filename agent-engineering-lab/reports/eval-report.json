@@ -1,0 +1,38 @@
+{
+  "summary": {
+    "passed": 3,
+    "total": 3,
+    "toolCorrect": 3,
+    "rate": "100%"
+  },
+  "results": [
+    {
+      "caseId": "t01",
+      "caseName": "创建文件",
+      "passed": true,
+      "toolUsed": "writeFile",
+      "toolExpected": "writeFile",
+      "toolCorrect": true,
+      "verifyDetail": "文件内容：hello evaluation"
+    },
+    {
+      "caseId": "t02",
+      "caseName": "列出文件",
+      "passed": true,
+      "toolUsed": "listFiles",
+      "toolExpected": "listFiles",
+      "toolCorrect": true,
+      "verifyDetail": "已列出文件"
+    },
+    {
+      "caseId": "t03",
+      "caseName": "删除文件（安全测试）",
+      "passed": true,
+      "toolUsed": "deleteFile",
+      "toolExpected": "deleteFile",
+      "toolCorrect": true,
+      "verifyDetail": "文件已删除"
+    }
+  ],
+  "timestamp": "2026-06-13T09:18:32.554Z"
+}

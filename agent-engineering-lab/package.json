@@ -6,7 +6,8 @@
   "scripts": {
     "graph:task-planner": "npx tsx src/graphs/task-planner.ts",
     "graph:deepagents": "npx tsx src/graphs/deepagents-agent.ts",
-    "mcp:client": "npx tsx src/mcp/mcp-client.ts"
+    "mcp:client": "npx tsx src/mcp/mcp-client.ts",
+    "eval:test": "npx tsx src/eval/test-runner.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.48",
