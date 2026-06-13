@@ -1,0 +1,21 @@
+{
+  "name": "agent-engineering-lab",
+  "version": "1.0.0",
+  "description": "从 Demo 到工程 —— Agent 可维护、可评测、可追踪、可扩展",
+  "private": true,
+  "scripts": {
+    "graph:task-planner": "npx tsx src/graphs/task-planner.ts"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/openai": "^1.4.7",
+    "dotenv": "^16.5.0",
+    "openai": "^4.90.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}
