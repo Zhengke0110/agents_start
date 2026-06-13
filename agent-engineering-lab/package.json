@@ -7,8 +7,8 @@
     "graph:task-planner": "npx tsx src/graphs/task-planner.ts"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.0",
-    "@langchain/langgraph": "^0.2.0",
+    "@langchain/core": "^1.1.48",
+    "@langchain/langgraph": "^1.4.1",
     "@langchain/openai": "^1.4.7",
     "dotenv": "^16.5.0",
     "openai": "^4.90.0"
