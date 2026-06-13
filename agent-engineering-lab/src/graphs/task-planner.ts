@@ -400,26 +400,21 @@ async function reporter(state: typeof AgentState.State) {
 // compile：编译图
 // ================================================================
 const graph = new StateGraph(AgentState)
+  // ── 第 1 步：注册节点 ──
   .addNode("planner", planner)
   .addNode("executor", executor)
   .addNode("human_approval", humanApproval)
   .addNode("reporter", reporter)
-
-  // start → planner → executor → router
-  .addEdge("__start__", "planner")
-  .addEdge("planner", "executor")
-  .addConditionalEdges("executor", router, {
-    executor: "executor",
-    human_approval: "human_approval",
-    reporter: "reporter",
+  // ── 第 2 步：连线 ──
+  .addEdge("__start__", "planner")                                    // 入口 → planner
+  .addEdge("planner", "executor")                                     // planner → executor（固定）
+  .addConditionalEdges("executor", router, {                          // executor → 岔道
+    executor: "executor",                                             //   → 回去干活
+    human_approval: "human_approval",                                 //   → 暂停审批
+    reporter: "reporter",                                             //   → 生成报告
   })
-
-  // human_approval → executor（批准后执行）
-  .addEdge("human_approval", "executor")
-
-  // reporter → END
-  .addEdge("reporter", END)
-
+  .addEdge("human_approval", "executor")                              // 审批完 → 回去干活
+  .addEdge("reporter", END)                                           // 报告完 → 结束
   .compile({ checkpointer: memorySaver });
 
 // ================================================================
