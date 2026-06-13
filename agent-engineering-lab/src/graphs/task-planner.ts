@@ -19,11 +19,24 @@
 import * as dotenv from "dotenv";
 dotenv.config();
 
-import { StateGraph, Annotation, END } from "@langchain/langgraph";
+import {
+  StateGraph,
+  Annotation,
+  END,
+  interrupt,
+  MemorySaver,
+  Command,
+} from "@langchain/langgraph";
 import { ChatOpenAI } from "@langchain/openai";
 import * as fs from "fs";
 import * as path from "path";
-import { writeFile, deleteFile, confirmDeleteFile, listFiles, toolDescriptions } from "../tools/file-tools.js";
+import {
+  writeFile,
+  deleteFile,
+  confirmDeleteFile,
+  listFiles,
+  toolDescriptions,
+} from "../tools/file-tools.js";
 
 const model = new ChatOpenAI({
   model: "deepseek-chat",
@@ -33,6 +46,9 @@ const model = new ChatOpenAI({
 
 const WORKSPACE = path.resolve(process.cwd(), "workspace");
 fs.mkdirSync(WORKSPACE, { recursive: true });
+
+// Checkpoint 存储器：保存每步状态，支持暂停/恢复
+const memorySaver = new MemorySaver();
 
 // ================================================================
 // State
@@ -53,11 +69,11 @@ const AgentState = Annotation.Root({
     default: () => 0,
   }),
   needsApproval: Annotation<boolean>({
-    value: (a, b) => b ?? a ?? false,
+    value: (a, b) => b,
     default: () => false,
   }),
   approvalMessage: Annotation<string>({
-    value: (a, b) => b ?? a ?? "",
+    value: (a, b) => b,
     default: () => "",
   }),
   log: Annotation<string[]>({
@@ -69,7 +85,7 @@ const AgentState = Annotation.Root({
     default: () => "",
   }),
   pendingAction: Annotation<{ tool: string; filePath: string } | null>({
-    value: (a, b) => b ?? a ?? null,
+    value: (a, b) => b, // 直接取新值，包括 null（清空也生效）
     default: () => null,
   }),
 });
@@ -82,23 +98,23 @@ async function planner(state: typeof AgentState.State) {
 
   const prompt = `你是任务规划助手。请把以下任务拆成 3-5 个具体步骤，每行一个：\n\n${state.userInput}\n\n规则：不要生成"生成报告""汇总报告"之类的步骤，系统会自动生成最终报告。只输出步骤列表。`;
 
-  const response = await model.invoke(prompt);
+  const response = await model.invoke(prompt); // 模型调用
   const content =
     typeof response.content === "string"
       ? response.content
-      : JSON.stringify(response.content);
+      : JSON.stringify(response.content); // 兼容 JSON
 
   const steps = content
     .split("\n")
     .map((line: string) => line.replace(/^\d+[.)]\s*/, "").trim())
-    .filter((line: string) => line.length > 5);
+    .filter((line: string) => line.length > 5); //  把 LLM 返回按行拆开
 
   const todos = steps.map((title: string, index: number) => ({
     id: index + 1,
     title,
     status: "pending" as const,
     result: "",
-  }));
+  })); // 生成待办列表
 
   console.log(`[planner] 生成 ${todos.length} 个步骤：`);
   todos.forEach((t: { id: number; title: string }) =>
@@ -127,11 +143,13 @@ async function executor(state: typeof AgentState.State) {
   // 如果有待审批的操作且审批已通过，执行它
   if (state.pendingAction) {
     const action = state.pendingAction;
-    console.log(`[executor] 执行已审批的操作：${action.tool}("${action.filePath}")`);
+    console.log(
+      `[executor] 执行已审批的操作：${action.tool}("${action.filePath}")`,
+    );
 
     let result: string;
     if (action.tool === "deleteFile") {
-      const r = confirmDeleteFile(action.filePath);
+      const r = confirmDeleteFile(action.filePath); // 确认删除操作
       result = r.message;
     } else {
       result = `未知操作：${action.tool}`;
@@ -167,10 +185,11 @@ ${toolDescriptions}
 请返回 JSON：{"tool": "工具名", "args": ["参数1", "参数2"]}
 只返回 JSON。`;
 
-  const response = await model.invoke(toolPrompt);
-  const text = typeof response.content === "string"
-    ? response.content
-    : JSON.stringify(response.content);
+  const response = await model.invoke(toolPrompt); // 模型调用
+  const text =
+    typeof response.content === "string"
+      ? response.content
+      : JSON.stringify(response.content);
 
   console.log(`[executor] LLM 决策：${text.slice(0, 150)}`);
 
@@ -179,7 +198,9 @@ ${toolDescriptions}
   try {
     // 提取 JSON（可能被 markdown 包裹）
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    toolCall = jsonMatch ? JSON.parse(jsonMatch[0]) : { tool: "none", args: [] };
+    toolCall = jsonMatch
+      ? JSON.parse(jsonMatch[0])
+      : { tool: "none", args: [] };
   } catch {
     toolCall = { tool: "none", args: [] };
   }
@@ -187,7 +208,9 @@ ${toolDescriptions}
   // 不需要工具 → 标记完成
   if (toolCall.tool === "none") {
     const newTodos = state.todos.map((t, i) =>
-      i === idx ? { ...t, status: "completed" as const, result: "无需工具" } : t,
+      i === idx
+        ? { ...t, status: "completed" as const, result: "无需工具" }
+        : t,
     );
     return {
       todos: newTodos,
@@ -199,18 +222,21 @@ ${toolDescriptions}
   }
 
   // 执行工具
-  const [arg1, arg2] = toolCall.args || [];
-  console.log(`[executor] 调用工具：${toolCall.tool}(${[arg1, arg2].filter(Boolean).join(", ")})`);
+  const [arg1, arg2] = toolCall.args || []; // 从args中解析arg1和arg2，其中arg1是文件名，arg2是文件内容
+  console.log(
+    `[executor] 调用工具：${toolCall.tool}(${[arg1, arg2].filter(Boolean).join(", ")})`,
+  );
 
   if (toolCall.tool === "writeFile") {
     // 对于"创建笔记"这类任务，用 LLM 先生成内容
     const contentPrompt = `请为以下任务生成合适的文件内容：\n${todo.title}\n\n直接输出文件内容，不要解释。`;
     const contentRes = await model.invoke(contentPrompt);
-    const content = typeof contentRes.content === "string"
-      ? contentRes.content
-      : JSON.stringify(contentRes.content);
+    const content =
+      typeof contentRes.content === "string"
+        ? contentRes.content
+        : JSON.stringify(contentRes.content);
 
-    const r = writeFile(arg1 || "untitled.md", arg2 || content);
+    const r = writeFile(arg1 || "untitled.md", arg2 || content); // arg1 是文件名，arg2 是内容
     const newTodos = state.todos.map((t, i) =>
       i === idx ? { ...t, status: "completed" as const, result: r.message } : t,
     );
@@ -224,7 +250,7 @@ ${toolDescriptions}
   }
 
   if (toolCall.tool === "deleteFile") {
-    const r = deleteFile(arg1 || "");
+    const r = deleteFile(arg1 || ""); //  arg1 是文件名
     if (r.needsApproval) {
       // 需要审批：不标记完成，不推进索引，设置审批状态
       return {
@@ -263,7 +289,13 @@ ${toolDescriptions}
 
   // 未知工具
   const newTodos = state.todos.map((t, i) =>
-    i === idx ? { ...t, status: "completed" as const, result: `未知工具：${toolCall.tool}` } : t,
+    i === idx
+      ? {
+          ...t,
+          status: "completed" as const,
+          result: `未知工具：${toolCall.tool}`,
+        }
+      : t,
   );
   return {
     todos: newTodos,
@@ -300,16 +332,26 @@ function router(state: typeof AgentState.State): string {
 }
 
 // ================================================================
-// 节点 3：HumanApproval
+// 节点 3：HumanApproval —— 使用 interrupt() 暂停等待人类输入
 // ================================================================
 async function humanApproval(state: typeof AgentState.State) {
   const todo = state.todos[state.currentTaskIndex];
-  console.log(`\n[approval] 危险操作需要审批：${todo?.title}`);
+  const action = state.pendingAction;
+  const msg = `\n⚠️ 危险操作：${todo?.title}\n   文件：${action?.filePath ?? "未知"}\n   输入"批准"或"拒绝"：`;
+
+  // interrupt() 会暂停图执行，等待外部 Command({ resume: "..." })
+  const decision = interrupt({
+    question: msg,
+    action: action?.tool,
+    filePath: action?.filePath,
+  });
+
+  console.log(`[approval] 收到决策：${decision}`);
 
   return {
-    needsApproval: true,
-    approvalMessage: `是否执行危险操作：${todo?.title}？`,
-    log: [`[approval] 等待审批：${todo?.title}`],
+    needsApproval: false,
+    approvalMessage: "",
+    log: [`[approval] 用户决策：${decision}`],
   };
 }
 
@@ -351,6 +393,11 @@ async function reporter(state: typeof AgentState.State) {
 
 // ================================================================
 // 构建图
+// addNode：添加节点
+// addEdge：添加边
+// addConditionalEdges：根据条件添加边（if/eslse）
+// END：结束节点
+// compile：编译图
 // ================================================================
 const graph = new StateGraph(AgentState)
   .addNode("planner", planner)
@@ -373,11 +420,22 @@ const graph = new StateGraph(AgentState)
   // reporter → END
   .addEdge("reporter", END)
 
-  .compile();
+  .compile({ checkpointer: memorySaver });
 
 // ================================================================
 // 运行
 // ================================================================
+import * as readline from "readline";
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+}); // 创建一个 readline 接口，用于获取用户输入
+
+function askQuestion(query: string): Promise<string> {
+  return new Promise((resolve) => rl.question(query, resolve));
+}
+
 async function main() {
   const userInput =
     "请帮我完成以下任务：\n" +
@@ -387,24 +445,38 @@ async function main() {
 
   console.log("========== LangGraph 任务规划 Agent ==========\n");
   console.log("[user]", userInput, "\n");
+  console.log("── 开始执行 ──\n");
 
-  const stream = await graph.stream({ userInput }, { streamMode: "values" });
+  // 配置：thread_id 让 LangGraph 知道这是同一个会话
+  const config = { configurable: { thread_id: "session-1" } };
 
-  console.log("\n── 开始执行 ──\n");
+  // 第 1 次 invoke：图会跑到 interrupt() 处暂停
+  let state = await graph.invoke({ userInput }, config);
 
-  for await (const chunk of stream) {
-    // 只在审批节点触发时打印，且 finalReport 生成后不再检查
-    if (chunk.needsApproval && !chunk.finalReport) {
+  // 检查是否被 interrupt 暂停了
+  // LangGraph 1.x: interrupt 后 state 包含 __interrupt__ 字段
+  while ((state as Record<string, unknown>).__interrupt__) {
+    const interruptData = (state as Record<string, unknown>).__interrupt__ as
+      | Array<{ value: { question: string; action: string; filePath: string } }>
+      | undefined;
+
+    if (interruptData && interruptData.length > 0) {
+      const q = interruptData[0].value;
+      console.log(`\n${"=".repeat(50)}`);
+      const answer = await askQuestion(q.question);
       console.log(`${"=".repeat(50)}`);
-      console.log(chunk.approvalMessage);
-      console.log(`${"=".repeat(50)}`);
-      console.log("[info] Demo 模式：自动批准\n");
+
+      // 用用户输入恢复执行
+      state = await graph.invoke(new Command({ resume: answer }), config);
+    } else {
+      break;
     }
   }
 
-  await new Promise((r) => setTimeout(r, 500));
-  console.log("[info] 图执行完毕");
+  console.log("\n[info] 图执行完毕");
   console.log("[info] 查看 workspace/execution-report.md");
+
+  rl.close();
 }
 
 main();
