@@ -5,14 +5,17 @@
   "private": true,
   "scripts": {
     "graph:task-planner": "npx tsx src/graphs/task-planner.ts",
-    "graph:deepagents": "npx tsx src/graphs/deepagents-agent.ts"
+    "graph:deepagents": "npx tsx src/graphs/deepagents-agent.ts",
+    "mcp:client": "npx tsx src/mcp/mcp-client.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.1.48",
     "@langchain/langgraph": "^1.4.1",
     "@langchain/openai": "^1.4.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^16.5.0",
-    "openai": "^4.90.0"
+    "openai": "^4.90.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
