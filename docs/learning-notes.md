@@ -545,3 +545,50 @@ const review = await reviewerAgent(report, findings);
 - 并行化（Researcher A 和 Researcher B 同时查不同主题）
 - 加入重试机制（Reviewer 不满意 → Writer 修改 → 再审核）
 - 实现真正的 tool-calling 子 Agent（子 Agent 也能调工具）
+
+---
+
+## Demo 08：DeepAgents 风格综合 Agent
+
+### DeepAgents 相比普通 Agent 多了什么？
+
+| 普通 Agent | DeepAgents |
+|-----------|------------|
+| 单一循环 | 主 Agent + 子 Agent 多层架构 |
+| 所有内容在上下文 | 长内容卸载到文件，按需读取 |
+| 自动执行 | 危险操作暂停等待人类确认 |
+| 固定工具集 | 工具按能力分类，可动态扩展 |
+
+### 六大能力解读
+
+#### 1. Planning（任务规划）
+和 Demo 05 一样，用 Todo 管理步骤。但这次 Agent 不仅规划"做什么"，还规划"用什么能力做"。
+
+#### 2. Tools（多工具调用）
+10 个工具按能力分类：[plan] [search] [file] [subagent] [ctx] [approval]。Agent 在多种类型之间切换。
+
+#### 3. Filesystem（文件读写）
+和 Demo 03 一样，但增加了"写前审批"机制。
+
+#### 4. Context Management（上下文管理）
+**这是新增的核心能力**。当对话消息超过阈值，Agent 把长内容保存到文件，释放 token。后续通过 readFile 按需读取。类比：电脑内存满了，把不用的程序存到硬盘。
+
+#### 5. SubAgent（子 Agent）
+和 Demo 07 一样，但这次子 Agent 是通过工具调用的，而不是硬编码的流水线。Agent 自己决定何时委托。
+
+#### 6. Human Approval（人类审批）
+**另一个新增能力**。覆盖文件前必须先 requestApproval。关键实现细节：审批状态必须**持久化**（approvedOverwrites 集合），否则会陷入"已批准 → 又提示需审批"的死循环。
+
+### 常见错误
+
+1. **审批状态丢失** → approve 后没记住，导致死循环。修复：用 Set 记录已批准的操作。
+2. **消息数持续增长** → 即使 offloadContext 了，tool 消息仍在增长。需要真正的上下文压缩策略。
+3. **子 Agent 输出过长** → 子 Agent 返回 7000+ 字符，通过 offloadContext 解决了。
+
+### 后续可升级方向
+
+- 用 LangChain / DeepAgents 框架替代手写循环
+- 向量数据库替代关键词检索
+- 实现真正的交互式审批（readline 等待用户输入）
+- 上下文压缩策略：自动摘要替代截断
+- 持久化 Todo 到文件或数据库
