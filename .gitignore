@@ -1,1 +1,11 @@
-# 根容器：两个子项目各自管理自己的 git
+# 每个子项目的 .env 包含密钥，不能提交
+**/.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
